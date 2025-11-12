@@ -19,7 +19,7 @@ def send_individual_mail(server, file , email) :
     print(file , email)
     msg = EmailMessage()
     msg['Subject'] = "Quiz marks CSE"
-    msg['From'] = "Shivam Singh Kushwah and Meghana Reddy"
+    msg['From'] = "Manu Kushwah"
     msg['To'] = email[0] + "," + email[1]
 
     with open("content.txt") as content :
