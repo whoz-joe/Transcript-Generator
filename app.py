@@ -1,356 +1,286 @@
+from openpyxl import Workbook
 import csv
-import pandas as pd
-import math
-import openpyxl 
 import os
+from fpdf import FPDF
 from pywebio import *
 from pywebio.input import *
 from pywebio.output import *
-from openpyxl.drawing.image import Image
-from openpyxl.styles import Alignment,Font, colors,Border,Side
-from openpyxl.drawing.image import Image
-import smtplib, ssl
-from email.message import EmailMessage
+
+grades_dict = {"AA": 10,"AB": 9,"BB": 8,"BC": 7,"CC": 6,"CD": 5,"DD": 4,"DD*": 4,"F": 0,"F*": 0,"I": 0,}    #a helper dictionary for the grades 
+stud_dict = {}   # a dictionary that will store the student details in a mapped fashion 
+courses_dict = {}    #a helper dictionary to find out the name of the courses corresponding to the respective course code
+heading = ["Sub. Code", "Subject Name", "L-T-P", "CRD", "GRD"]
+
+student_details = {'roll' : "1901EE55", 'name' : "Amelia Jonas" ,
+            'year' : "2019", "programme" : "Bachelor of Technology" ,
+            'course' : "Computer science and engineering"}
+
+course_details = {
+    "CS" : "Computer Science and Engineering" ,
+    "EE" : "Electrical Engineering" ,
+    "ME" : "Mechanical Engineering"
+}
 
 
-roll_to_email = {}
+def cpi_calc(grades , credits):  # function to calculate the cpi upto a particular semester 
+    tot_sum = 0.0
+    cred_sum = 0
+    for i in range(len(grades)):
+        tot_sum += grades[i]*credits[i]
+    for c in credits:
+        cred_sum += c
+    return round(tot_sum/cred_sum, 2)  #return the rounded cpi upto 2 decimal
 
-def send_individual_mail(server, file , email) :
-    print(file , email)
-    msg = EmailMessage()
-    msg['Subject'] = "Quiz marks CSE"
-    msg['From'] = "Manu Kushwah"
-    msg['To'] = email[0] + "," + email[1]
+def pre_computation():
+    print("pre computation starting")
+    with open("sample_input/subjects_master.csv", "r") as file:
+        reader = csv.DictReader(file)
+        for i in reader:
+            courses_dict[i["subno"]] = {"subname": i["subname"], "ltp": i["ltp"], "crd": i["crd"]}    #setting the values in a courses dict for later use 
 
-    with open("content.txt") as content :
-        msg_content = content.read()
-        msg.set_content(msg_content)
+    with open("sample_input/names-roll.csv", "r") as file:
+        reader = csv.DictReader(file)     #reading the file as a dictionary 
+        for i in reader:
+            stud_dict[i["Roll"]] = {"Name": i["Name"]}   # setting the values in a stud_dict for later use  
+
+    with open("sample_input/grades.csv", "r") as file:
+        reader = csv.DictReader(file)
+        for i in reader:
+            try:
+                stud_dict[i["Roll"]][i["Sem"]]
+            except KeyError:
+                stud_dict[i["Roll"]][i["Sem"]] = {}
+            stud_dict[i["Roll"]][i["Sem"]][i["SubCode"]] = {"Grade": i["Grade"].strip(), "Sub_Type": i["Sub_Type"]}  #setting the grade values in the student dictionary 
+    print("Pre computation done")
+
+
+def footer(pdf) :
+    pdf.set_y(pdf.get_y() + 80)
+    y = pdf.get_y()
+    pdf.set_x(30)
+    pdf.set_font('Arial', 'B', 16)
+    pdf.text(pdf.get_x() , pdf.get_y(), "Date of issue: ")
+    pdf.line(75, pdf.get_y(), 150, pdf.get_y())
+    pdf.set_y(y - 10)
+    pdf.set_x(700)
+    pdf.cell(80, 1, "", 'B', 2, 'C')
+    pdf.cell(80, 10, "Assistant Registrar (Academic) ", 0, 0, 'C')
+
+
+def generate_pdf(pdf):
+    pdf.add_page()
+    start_index_x = 30
+    pdf.set_font('Arial' , 'B' , 16)
+    pdf.set_left_margin(20)
+    pdf.set_right_margin(20)
+    pdf.cell(0 , 700 , "" ,  1, 1)
+    pdf.set_xy(20 , 10)
+    pdf.cell(80, 80, "", 1,0,'C')
+    pdf.set_xy(20 , 10)
+    pdf.image('logo.png' ,pdf.get_x() + 5 , pdf.get_y() + 5 , 70 , 70 , "png", 'logo.png')
+    pdf.set_xy(100 , 10)
+    pdf.cell(630 , 80 , "" , 1 , 0 , 'C')
+    pdf.set_xy(100 , 10)
+    pdf.image('name.jpg', pdf.get_x() + 5, pdf.get_y() + 5 , 625, 70, "png", 'name.jpg' )
+    pdf.set_xy(730 , 10)
+    pdf.cell(80, 80, "", 1,0,'C')
+    pdf.set_xy(735 , 10)
+    pdf.image('logo.png' ,pdf.get_x() , pdf.get_y() + 5 , 70 , 70 , "png", 'logo.png')
+    pdf.set_y(80)
+    pdf.set_x(start_index_x)
+
+def semester_name(pdf, name):
+    pdf.set_font('Arial',"BU", 16)
+    pdf.cell(30, 10, f"Semester {name}", 0, 2)
+    pdf.set_font('Arial','',16)
+
+def overall_credits_cell(pdf , details) :
+    pdf.set_font('Arial', 'B', 16)
+    pdf.cell(200 , 10, f"Credits Taken: {details['credits']}    Credits Cleared: {details['credits']}  SPI: {details['spi']}   CPI: {details['cpi']}", 1, 2)
+    pdf.set_font('Arial' , '', 16)
+
+def make_description(pdf, details):
+    pdf.set_y(pdf.get_y())
+    pdf.set_x(250)
+    pdf.cell(400, 16,"" ,1, 0, 'C')
+    pdf.set_x(280)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(120, 8, f"Roll No:  {details['roll']}" , 0, 0)
+    pdf.cell(120, 8, f"Name:  {details['name']}" , 0, 0)
+    pdf.cell(120, 8, f"Year of admission:  {details['year']}" , 0, 1)
+    pdf.set_x(280)
+    pdf.cell(120, 8, f"Programme:  {details['programme']}" , 0, 0)
+    pdf.cell(120, 8, f"Course:  {details['course']}" , 0, 1)
+    pdf.set_y(pdf.get_y() + 10)
+
+def set_coordinates(pdf, x, y, sem):
+    # print(int(sem/4) , (int(sem%3)-1))
+    pdf.set_y(y + int((sem-1)/3)*150)
+    pdf.set_x(x + (int((sem-1)%3))*240 + (int((sem-1)%3))*20)
+    if (sem-1)%3 == 0 and sem!=1 : 
+        make_line(pdf, pdf.get_y())
+        # pdf.set_y(pdf.get_y() + 20)
+
+def create_cell(pdf ,type, to, content):
     
+    # print(type ,to , content)
+    if type==1 :
+        # print("this is type 1")
+        pdf.cell(60, 10, str(content) , 1, to, 'C')
+        return
+
+    if type==2 :
+        # print("this is type 2")
+        pdf.cell(140, 10, str(content) , 1, to, 'C')
+        return
+
+    if type==3 :
+        # print("this is type 3")
+        pdf.cell(20, 10, str(content) , 1, to, 'C')
+        return
+
+    if type==4 :
+        # print("this is type 4")
+        pdf.cell(15, 10, str(content) , 1, to, 'C')
+        return
+
+    if type==5 :
+        # print("this is type 5")
+        pdf.cell(15, 10, str(content) , 1, to, 'C')
+        return
+    if type==6 :
+        # print("this is type 6")
+        pdf.cell(100 , 10, str(content), 1, to, 'C')
 
 
-    with open("sample_output/marksheet/" + file , "rb") as f:
-        file_data = f.read()
-        # print(file_name)
-        msg.add_attachment(file_data, maintype="application" ,subtype="xlsx" ,filename = file)
-    # print(msg)
-    try:
-        server.send_message(msg)
-    except :
-        print("Some error occured , " , email , file)
-    print("email sent to " , email)
+def create_table(start_x, pdf ,headers, table_body):
+    # print(headers)
+    # semester_name(pdf,1)
+    pdf.set_x(start_x)
+    pdf.set_font("Arial", 'BU', 16)
+    i = 1
+    for heading in headers :
+            if i < 5:
+                create_cell(pdf, i , 0, heading)
+            else : 
+                create_cell(pdf, i, 1 , heading)
+            i = i+1
+    pdf.set_x(start_x)
+    pdf.set_font("Arial", '', 16)
+    i = 1
+    for row in table_body:
+        for column in row :
+            if i < 5:
+                create_cell(pdf, i , 0, column)
+            else : 
+                create_cell(pdf, i, 1 , column)
+            i = i+1
+        pdf.set_x(start_x)
+        i = 1
 
+def make_line(pdf , y) :
+    pdf.line(20, y, 810, y)
 
-def send_email() :
-    print("Sending email in progress")
-    put_text("Sending Emails to students.......")
-    server = smtplib.SMTP_SSL('smtp.gmail.com',465)
-    server.login('danielisgamingtoday@gmail.com' , "thisIsPassword@")
-    for file in os.listdir("sample_output/marksheet") :
-        if file == "concise_marksheet.csv" :
+def generate_marksheet(start_roll , end_roll):
+    pre_computation()
+    if os.path.exists("output") == False:
+        os.makedirs("output")
+    prefix = start_roll[0:6]
+
+    if(start_roll[4:6] != end_roll[4:6]) :
+        put_warning("The students cannot be of different departments", closable=True)
+        return 
+
+    if end_roll[0:6] != prefix:
+        put_warning("Please enter correct range of roll numbers", closable=True)
+        return 
+
+    start = int(start_roll[6:len(start_roll)])
+    end = int(end_roll[6:len(end_roll)])
+    if (start > end) :
+        put_warning("Please input correct range of roll numbers" , closable=True)
+        return 
+    print(start , end)
+    put_html("<h3>Your Marksheets are being generated...... </h3>")
+    not_present_roll_no = []
+
+    for i in range(start , end+1):
+        curr_roll = prefix + str(int(i/10)) + str(int(i%10))
+        print(curr_roll)
+        if curr_roll not in stud_dict :
+            not_present_roll_no.append(curr_roll)
             continue 
-        send_individual_mail(server, file,roll_to_email[file])
-    put_success("Emails sent to concerned students")
-
-
-
-def marksheetfromroll(roll,Name,ans,stud_ans,total,neg_marks,pos,neg):
-    wb = openpyxl.Workbook()
-    total_qns = len(ans)
-    img = Image("logo.png")
-    sheet = wb.active
-    sheet.add_image(img, "A1")
-    sheet.title = "Quiz.marks"
-
-    sheet.column_dimensions['A'].width = 25
-    sheet.column_dimensions['B'].width = 25
-    sheet.column_dimensions['C'].width = 25
-    sheet.column_dimensions['D'].width = 25
-    sheet.column_dimensions['E'].width = 25
-
-    b_font = Font(bold=True,size=18)
-    n_font = Font(size=14)
-    green_font= Font(bold=True,size=14,color = '00008000')
-    red_font= Font(bold=True,size=14,color = '00FF0000')
-    blue_font= Font(bold=True,size=14,color = '000000FF')
-    
-    sheet.merge_cells('A6:E7')
-    font = Font(size=17,bold=True,underline='single')
-    cell = sheet.cell(row=6, column=1)  
-    cell.value = "marksheet"
-    cell.font = font 
-    cell.alignment = Alignment(horizontal='center', vertical='center')  
-
-    cell = sheet["A8"]
-    cell.value = "Name"
-    cell.font = n_font
-
-    cell = sheet["B8"]
-    cell.value = Name
-    cell.font = b_font
-
-    cell = sheet["D8"]
-    cell.value = "Exam"
-    cell.font = n_font
-
-    cell = sheet["E8"]
-    cell.value = "Quiz"
-    cell.font = n_font
-
-    cell = sheet["A9"]
-    cell.value = "Roll Number"
-    cell.font = n_font
-
-    cell = sheet["B9"]
-    cell.value = roll
-    cell.font = b_font
-
-    double = Side(border_style='medium', color="00000000")
-    border = Border(left=double,right=double,top=double,bottom=double)
-    cell = sheet["A11"]
-    cell.border = border
-
-    cell = sheet["B11"]
-    cell.value = "Right"
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["C11"]
-    cell.value = "Wrong"
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["D11"]
-    cell.value = "Not Attempt"
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["E11"]
-    cell.value = "max"
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center') 
-
-    cell = sheet["A14"]
-    cell.border = border
-    cell.value = "No."
-    cell.font = b_font
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["B14"]
-    cell.value = total/pos
-    cell.font = green_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["C14"]
-    cell.value = neg_marks/neg
-    cell.font = red_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["D14"]
-    cell.value = total_qns - (total/pos + neg_marks/neg)
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["E14"]
-    cell.value = total_qns
-    cell.font = blue_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center') 
-
-
-    cell = sheet["A13"]
-    cell.border = border
-    cell.value = "marking"
-    cell.font = b_font
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["B13"]
-    cell.value = pos
-    cell.font = green_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["C13"]
-    cell.value = neg
-    cell.font = red_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["D13"]
-    cell.value = 0
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["E13"]
-    cell.font = blue_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center') 
-
-
-    cell = sheet["A14"]
-    cell.border = border
-    cell.value = "Total"
-    cell.font = b_font
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["B14"]
-    cell.value = total
-    cell.font = green_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["C14"]
-    cell.value = neg_marks
-    cell.font = red_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["D14"]
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center')  
-
-    cell = sheet["E14"]
-    cell.value = str(total+neg_marks) + "/" + str(pos*total_qns)
-    cell.font = blue_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center') 
-
-    cell = sheet["A17"]
-    cell.value = "Student Ans"
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center') 
-
-    cell = sheet["B17"]
-    cell.value = "Correct Ans"
-    cell.font = b_font
-    cell.border = border
-    cell.alignment = Alignment(horizontal='center') 
-
-    for i in range(1,total_qns+1):
-
-        cell = sheet["A"+str(17+i)]
-        if isinstance(stud_ans[i],str):
-            cell.value = stud_ans[i]
-        elif isinstance(stud_ans[i], float) and math.isnan(stud_ans[i]):
-            cell.value = ""
-        
-        if stud_ans[i] == ans[i]:
-            cell.font = green_font
-        else:
-            cell.font = red_font
-        cell.border = border
-        cell.alignment = Alignment(horizontal='center') 
-
-        cell = sheet["B"+str(17+i)]
-        cell.value = ans[i]
-        cell.font = blue_font
-        cell.border = border
-        cell.alignment = Alignment(horizontal='center') 
-    wb.save("sample_output/marksheet/"+roll+'.xlsx')
-
-def marksheets(csvreader,masreader,pos,neg):
-    stdmpp = {}
-    header = []
-    for ind in masreader.index:
-        stdmpp[masreader['roll'][ind]] = masreader['name'][ind]
-
-    with open("sample_input/save_response.csv","w+") as csvfile:
-        csvreader.to_csv("sample_input/save_response.csv")
-
-    df = pd.read_csv("sample_input/save_response.csv")
-    print(df)
-
-    score_after_negative = []
-    statusAns = []
-
-    ans = getAnswermapFromRoll("ANSWER", df)
-    print(ans)
-    for ind in df.index:
-        stud_ans = getAnswermapFromRoll(df['Roll Number'][ind], df) 
-        roll_to_email[df['Roll Number'][ind] + ".xlsx"]=[df['Email address'][ind] , df["IITP webmail"][ind] ]
-        total = 0
-        actual_marks = 0
-        neg_marks = 0
-        for i in range(1,len(stud_ans)+1):
-            if stud_ans[i] == ans[i]:
-                total += pos
-            elif isinstance(stud_ans[i], float) and math.isnan(stud_ans[i]):
-                pass
+        pdf = FPDF('L' ,'mm' , (800 , 830))
+        generate_pdf(pdf)
+        pdf.set_y(pdf.get_y() + 20)
+        student_details['roll'] = curr_roll
+        student_details['course'] = course_details[curr_roll[4:6]]
+        make_description(pdf , student_details)
+        pdf.set_x(30)
+        credits = [0,0,0,0,0,0,0,0]                #list to store the credits sum of a semester 
+        total_credits = [0,0,0,0,0,0,0,0]          #list to store the credits sum till semester 
+        spi = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]    #list to store the spi of all the semesters 
+        cpi = [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]    #list to store the cpi of all the semesters
+        x_coordinate = pdf.get_x()
+        y_coordinate = pdf.get_y()
+        for j in range(1, 9):
+            set_coordinates(pdf, x_coordinate , y_coordinate, j)
+            creds = []
+            grades = []
+            l = 1
+            try:
+                stud_dict[curr_roll][str(j)]
+            except KeyError:
+                continue
+            table_data = []
+            for k in stud_dict[curr_roll][str(j)]: #k is the subject code 
+                # ws.append([l,k,courses_dict[k]["subname"],courses_dict[k]["ltp"],courses_dict[k]["crd"],stud_dict[curr_roll][str(j)][k]["Sub_Type"],stud_dict[curr_roll][str(j)][k]["Grade"]])
+                temp_data_row = []
+                temp_data_row.append(k)
+                temp_data_row.append(courses_dict[k]['subname'])
+                temp_data_row.append(courses_dict[k]["ltp"])
+                temp_data_row.append(courses_dict[k]["crd"])
+                temp_data_row.append(grades_dict[stud_dict[curr_roll][str(j)][k]["Grade"]])
+                table_data.append(temp_data_row)
+                creds.append(int(courses_dict[k]["crd"]))
+                grades.append(grades_dict[stud_dict[curr_roll][str(j)][k]["Grade"]])
+                l += 1
+            semester_name(pdf,j)
+            create_table(pdf.get_x(), pdf, heading, table_data)
+            for c in creds:
+                credits[j-1]+=c
+            spi[j-1]=cpi_calc(grades, creds)
+            if j>1:
+                total_credits[j-1]=total_credits[j-2]+credits[j-1]
+                cpi[j-1]=cpi_calc(spi[:j],credits[:j])
             else:
-                neg_marks +=neg 
-        actual_marks = total + neg_marks
-        score_after_negative.append(str(actual_marks)+"/"+str(pos*len(stud_ans)))
-        statusAns.append("["+str(int(total/pos))+","+str(int(neg_marks/neg))+","+str(int(len(stud_ans)-total/pos-neg_marks/neg))+"]")
-        marksheetfromroll(df['Roll Number'][ind], df['Name'][ind],ans,stud_ans,total,neg_marks,pos,neg)
+                total_credits[j-1]=credits[j-1]
+                cpi[j-1]=spi[j-1]
+            details = {'credits' : credits[j-1] , 'spi' : spi[j-1], 'cpi' : cpi[j-1]}
+            # pdf.set_y(pdf.get_y() + 5)
+            overall_credits_cell(pdf, details)
+        set_coordinates(pdf , x_coordinate , y_coordinate, 10)
+        footer(pdf)
+        pdf.output("transcriptsIITP/"+curr_roll+".pdf")
+    print(not_present_roll_no)
+    put_success("The required marksheets have been generated, please look in the output folder for the same" ,  closable= True)
+    for roll in not_present_roll_no :
+        put_info(f"Roll no {roll} was not found in the list" , closable=True)
 
+def main() :
+    req_action = "Generate Marksheets"
+    while(req_action != "None") :
 
-    print(len(stud_ans))
-    df.insert(loc=6, column='Score_After_Negative', value=score_after_negative)
-    df.insert(loc=len(df.columns), column='statusAns', value=statusAns)
-    df.to_csv('sample_output/marksheet/concise_marksheet.csv',index=False)
+        req_action = actions(label = "Please select your action" ,
+                    buttons=[{'label' : "Generate Marksheets",'value':"Generate Marksheets"} ,
+                        {'label' : "I wish to exit",'value':"None"}
+                    ])
 
-def main():
-    # put_html("<h1> Please select the master Roll file : </h1>")
-    master_roll = file_upload(label='Please select the master Roll file', accept=".csv", name=None, placeholder='Choose file', multiple=False, max_size=0, max_total_size=0, required=True)
-    master_roll_csv = content_to_pandas(master_roll['content'].decode('utf-8').splitlines())
-    # print(master_roll_csv)
-    # print(master_roll['content'])
-    response_file = file_upload(label='Please select the Responses file', accept=".csv", name=None, placeholder='Choose file', multiple=False, max_size=0, max_total_size=0, required=True)
-    response_file_csv = content_to_pandas(response_file['content'].decode('utf-8').splitlines())
-    # print(response_file_csv)
-    positive_marks = input("What is the positive marks per question" , type = NUMBER)
-
-    neg_marks = input("What is negative marks per question (write 0 if none) " , type = NUMBER)
-
-    # master_roll_csv = read_csv(master_roll)
-    # response_file_csv = read_csv(response_file)
-    # print(master_roll_csv)
-    # print(response_file_csv)
-
-    marksheets(response_file_csv , master_roll_csv, positive_marks, neg_marks)
-
-    put_success("Yayy!!! Your marksheets have been generated", closable=True, scope=None, position=- 1) 
-
-    req_action = "generate pdf"
-    while(req_action != "none"):
-        req_action = actions(label="Please Select your action", 
-                    buttons=[{'label': 'Download marksheets', 'value': "marksheets"}, 
-                             {'label':'Send Email to students', 'value': "Email"} , 
-                             {'label':'I wish to exit', 'value': "none"}
-                             ])
-        if(req_action == "marksheets"):
-            put_html("<h2>Your marksheets have been downloaded, please check your sample_output folder</h2>")
-        if(req_action == "Email") : 
-            send_email()
-            put_html("<h2>The mail have been sent to the concered students</h2>")
-
-    put_success("This was our project, hope you liked it :)")
-
-def content_to_pandas(content: list):
-    with open("tmp.csv", "w") as csv_file:
-        writer = csv.writer(csv_file, delimiter =",")
-        for line in content:
-            # print(line)
-            writer.writerow(line.split(","))
-    return pd.read_csv("tmp.csv")
-
-def getAnswermapFromRoll(roll,df):
-    ans = df.loc[df['Roll Number'] == roll]
-    answers = ans.values.tolist()[0][7:]
-    answer_map = {}
-    c =1
-    for ans in answers:
-        answer_map[c] = ans
-        c+=1 
-    return answer_map
-    
-start_server(main, port=3001, debug=True , static_dir = "/")
+        if (req_action == "Generate Marksheets"):
+            start = input("Please enter the starting roll number", type = TEXT)
+            end = input("Please enter the ending Roll numbetr to generate the report", TYPE=TEXT)
+            generate_marksheet(start , end)
+        else :
+            put_success("Hope you liked the project")
+            
+start_server(main, port=3001)        
